@@ -1,0 +1,5 @@
+# Server 模块依赖包
+flask>=2.3.0
+flask-cors>=4.0.0
+pywin32>=305
+watchdog>=3.0.0

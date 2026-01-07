@@ -1,0 +1,23 @@
+{
+  "system_name": "斯能服务器管理系统",
+  "server": {
+    "host": "192.168.110.77",
+    "port": 5000
+  },
+  "default_directory": "D:\\存放资料",
+  "user_mapping": {
+    "lijing": "李静",
+    "zhanggongan": "张公安",
+    "yanghaitao": "杨海涛",
+    "lirunhui": "李润辉",
+    "huanghui": "黄卉",
+    "maosongjie": "毛宋杰",
+    "yuanxiaofang": "袁晓芳",
+    "yuguolong": "余国龙",
+    "yehao": "叶浩",
+    "tumeng": "图勐",
+    "pengzhilong": "彭治龙",
+    "liwenting": "李文婷",
+    "chenglei": "程雷"
+  }
+}

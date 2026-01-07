@@ -1,0 +1,36 @@
+============================================================
+斯能服务器管理系统 - 服务器端部署说明
+============================================================
+
+部署步骤：
+1. 将整个 dist 文件夹复制到目标服务器 192.168.110.77
+   建议路径: C:\PermissionServer\
+
+2. 双击 '启动服务器.bat' 启动服务（需要管理员权限）
+   或者直接运行 PermissionServer.exe（需要管理员权限）
+
+3. 设置开机自启动：
+   a) 确保程序复制到 C:\PermissionServer\ 目录
+   b) 如果路径不同，请编辑 PermissionServer_Startup.xml 修改路径
+   c) 右键以管理员身份运行 '设置开机自启动.bat'
+
+4. 打开防火墙 5000 端口：
+   netsh advfirewall firewall add rule name="PermissionServer" dir=in action=allow protocol=TCP localport=5000
+
+配置文件：
+- config.json: 系统配置文件，可修改系统名称、用户映射等
+
+服务地址：
+- 本地访问: http://localhost:5000/health
+- 网络访问: http://192.168.110.77:5000/health
+- 系统信息: http://192.168.110.77:5000/api/info
+
+管理命令：
+- 查看任务: schtasks /query /tn "PermissionServer"
+- 运行任务: schtasks /run /tn "PermissionServer"
+- 停止服务: taskkill /f /im PermissionServer.exe
+- 删除任务: schtasks /delete /tn "PermissionServer" /f
+
+详细说明请查看 '服务器部署指南.md'
+
+============================================================
