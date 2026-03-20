@@ -270,6 +270,31 @@ class APIClient:
         }
         return self._request('POST', '/api/system/set-permission', json=data)
     
+    def set_file_permissions_batch(self, file_paths: List[str], usernames: List[str],
+                                   read: bool = False, write: bool = False,
+                                   modify: bool = False, full_control: bool = False,
+                                   recursive: bool = False) -> Dict[str, Any]:
+        """
+        批量给多个文件夹设置多个用户的Windows权限
+        :param file_paths: 文件夹路径列表
+        :param usernames: Windows用户名列表
+        :param read: 读取权限
+        :param write: 写入权限
+        :param modify: 修改权限
+        :param full_control: 完全控制权限
+        :param recursive: 是否递归应用到子文件夹
+        """
+        data = {
+            'file_paths': file_paths,
+            'usernames': usernames,
+            'read': read,
+            'write': write,
+            'modify': modify,
+            'full_control': full_control,
+            'recursive': recursive
+        }
+        return self._request('POST', '/api/system/set-permissions-batch', json=data)
+
     def remove_file_permission(self, file_path: str, username: str) -> Dict[str, Any]:
         """
         删除用户对文件/文件夹的所有Windows ACL权限

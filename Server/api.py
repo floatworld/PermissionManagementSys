@@ -521,6 +521,101 @@ def set_file_permission():
         }), 500
 
 
+@app.route('/api/system/set-permissions-batch', methods=['POST'])
+def set_file_permissions_batch():
+    """
+    批量给多个文件夹设置多个用户的Windows权限
+    
+    请求体:
+    {
+        "file_paths": ["C:\\path1", "C:\\path2"],
+        "usernames": ["User1", "User2"],
+        "read": true,
+        "write": false,
+        "modify": false,
+        "full_control": false,
+        "recursive": false
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"success": False, "message": "未接收到JSON数据"}), 400
+        
+        print(f"[ACL批量设置] 收到请求: {data}")
+        
+        file_paths = data.get('file_paths', [])
+        usernames = data.get('usernames', [])
+        read = data.get('read', False)
+        write = data.get('write', False)
+        modify = data.get('modify', False)
+        full_control = data.get('full_control', False)
+        recursive = data.get('recursive', False)
+        
+        if not file_paths:
+            return jsonify({"success": False, "message": "缺少必需参数: file_paths"}), 400
+        if not usernames:
+            return jsonify({"success": False, "message": "缺少必需参数: usernames"}), 400
+        if not (read or write or modify or full_control):
+            return jsonify({"success": False, "message": "至少需要选择一个权限"}), 400
+        
+        results = []
+        success_count = 0
+        fail_count = 0
+        
+        for file_path in file_paths:
+            for username in usernames:
+                try:
+                    result = SystemService.set_file_permission(
+                        file_path, username, read, write, modify, full_control, recursive
+                    )
+                    entry = {
+                        "file_path": file_path,
+                        "username": username,
+                        "success": result.get('success', False),
+                        "message": result.get('message', '')
+                    }
+                    results.append(entry)
+                    if result.get('success'):
+                        success_count += 1
+                    else:
+                        fail_count += 1
+                except Exception as e:
+                    results.append({
+                        "file_path": file_path,
+                        "username": username,
+                        "success": False,
+                        "message": str(e)
+                    })
+                    fail_count += 1
+        
+        print(f"[ACL批量设置] 完成: 成功={success_count}, 失败={fail_count}")
+        
+        total = len(file_paths) * len(usernames)
+        if fail_count == 0:
+            status = 'all_success'
+        elif success_count > 0:
+            status = 'partial_success'
+        else:
+            status = 'all_failed'
+        
+        return jsonify({
+            "success": fail_count == 0,
+            "status": status,
+            "success_count": success_count,
+            "fail_count": fail_count,
+            "total": total,
+            "results": results
+        })
+        
+    except Exception as e:
+        print(f"[ACL批量设置] 异常: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
 @app.route('/api/system/remove-permission', methods=['POST'])
 def remove_file_permission():
     """

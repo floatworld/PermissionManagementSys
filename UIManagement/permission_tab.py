@@ -6,7 +6,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTableWidget, QTableWidgetItem, QLabel, QComboBox,
                              QMessageBox, QDialog, QDialogButtonBox, QCheckBox,
                              QLineEdit, QTextEdit, QGroupBox, QHeaderView,
-                             QFileDialog, QTreeWidget, QTreeWidgetItem)
+                             QFileDialog, QTreeWidget, QTreeWidgetItem,
+                             QListWidget, QListWidgetItem, QInputDialog)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import sys
 import os
@@ -175,13 +176,19 @@ class PermissionDialog(QDialog):
 
 
 class WindowsACLDialog(QDialog):
-    """授予权限对话框"""
+    """授予权限对话框（支持多文件夹、多用户）"""
     
     def __init__(self, parent=None, directory_tab=None, preset_path=None, preset_users=None):
         super().__init__(parent)
         self.local_users = []
         self.directory_tab = directory_tab  # 保存目录管理标签页的引用
-        self.preset_path = preset_path  # 预填充路径
+        # preset_path 可以是字符串或字符串列表
+        if isinstance(preset_path, list):
+            self.preset_paths = preset_path
+        elif preset_path:
+            self.preset_paths = [preset_path]
+        else:
+            self.preset_paths = []
         self.preset_users = preset_users or []  # 预填充用户列表
         self.init_ui()
         self.load_local_users()
@@ -189,25 +196,44 @@ class WindowsACLDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         self.setWindowTitle("授予权限")
-        self.setMinimumWidth(700)
-        self.setMinimumHeight(600)
+        self.setMinimumWidth(750)
+        self.setMinimumHeight(680)
         
         layout = QVBoxLayout(self)
         
-        # 文件路径
-        path_group = QGroupBox("目标路径")
+        # 文件路径（支持多个文件夹）
+        path_group = QGroupBox("目标路径（支持多个文件夹）")
         path_layout = QVBoxLayout(path_group)
         
-        path_row = QHBoxLayout()
-        self.path_input = QLineEdit()
-        self.path_input.setPlaceholderText("选择文件或文件夹路径")
-        path_row.addWidget(self.path_input)
+        # 路径工具栏
+        path_toolbar = QHBoxLayout()
+        path_toolbar.addWidget(QLabel("已选路径:"))
+        path_toolbar.addStretch()
         
-        browse_btn = QPushButton("📁 浏览")
-        browse_btn.clicked.connect(self.browse_path)
-        path_row.addWidget(browse_btn)
+        browse_btn = QPushButton("📁 从目录树选择")
+        browse_btn.clicked.connect(self.browse_and_add_path)
+        path_toolbar.addWidget(browse_btn)
         
-        path_layout.addLayout(path_row)
+        manual_add_btn = QPushButton("✏️ 手动输入")
+        manual_add_btn.clicked.connect(self.manual_add_path)
+        path_toolbar.addWidget(manual_add_btn)
+        
+        remove_path_btn = QPushButton("🗑 移除选中")
+        remove_path_btn.clicked.connect(self.remove_selected_paths)
+        path_toolbar.addWidget(remove_path_btn)
+        
+        path_layout.addLayout(path_toolbar)
+        
+        # 路径列表（多选，允许添加多个路径）
+        self.path_list = QListWidget()
+        self.path_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.path_list.setMinimumHeight(100)
+        path_layout.addWidget(self.path_list)
+        
+        self.path_count_label = QLabel("未选择路径")
+        self.path_count_label.setStyleSheet("color: #888; font-size: 9pt;")
+        path_layout.addWidget(self.path_count_label)
+        
         layout.addWidget(path_group)
         
         # Windows用户选择（多选列表）
@@ -234,7 +260,6 @@ class WindowsACLDialog(QDialog):
         user_layout.addLayout(user_toolbar)
         
         # 用户列表（多选）
-        from PyQt5.QtWidgets import QListWidget
         self.user_list = QListWidget()
         self.user_list.setSelectionMode(QListWidget.MultiSelection)
         self.user_list.setMinimumHeight(150)
@@ -270,10 +295,10 @@ class WindowsACLDialog(QDialog):
         # 提示信息
         hint_label = QLabel(
             "💡 提示:\n"
-            "• 完全控制包含所有权限\n"
-            "• 修改权限包含读取、写入和删除\n"
-            "• 递归选项将权限应用到所有子项\n"
-            "• 权限设置后需要刷新才能生效"
+            "• 可添加多个文件夹路径，同时对所有选中文件夹设置权限\n"
+            "• 可选择多个用户，同时为所有选中用户设置权限\n"
+            "• 完全控制包含所有权限；修改权限包含读取、写入和删除\n"
+            "• 递归选项将权限应用到所有子项"
         )
         hint_label.setStyleSheet("color: #ffa726; font-size: 9pt; padding: 10px;")
         layout.addWidget(hint_label)
@@ -288,9 +313,10 @@ class WindowsACLDialog(QDialog):
         
         self._apply_dark_theme()
         
-        # 预填充路径
-        if self.preset_path:
-            self.path_input.setText(self.preset_path)
+        # 预填充路径列表
+        for p in self.preset_paths:
+            if p:
+                self._add_path_to_list(p)
     
     def _apply_dark_theme(self):
         """应用深色主题"""
@@ -341,8 +367,25 @@ class WindowsACLDialog(QDialog):
             }
         """)
     
-    def browse_path(self):
-        """从目录管理的目录树中选择"""
+    def _add_path_to_list(self, path: str):
+        """将路径添加到路径列表（避免重复）"""
+        # 检查是否已存在
+        for i in range(self.path_list.count()):
+            if self.path_list.item(i).text() == path:
+                return
+        self.path_list.addItem(path)
+        self._update_path_count()
+    
+    def _update_path_count(self):
+        """更新路径数量提示"""
+        count = self.path_list.count()
+        if count == 0:
+            self.path_count_label.setText("未选择路径")
+        else:
+            self.path_count_label.setText(f"✓ 已选择 {count} 个路径")
+    
+    def browse_and_add_path(self):
+        """从目录管理的目录树中选择路径并添加到列表"""
         # 创建目录选择对话框
         dialog = QDialog(self)
         dialog.setWindowTitle("选择服务器目录")
@@ -351,7 +394,7 @@ class WindowsACLDialog(QDialog):
         layout = QVBoxLayout(dialog)
         
         # 提示信息
-        hint = QLabel("📁 请从目录管理中的目录树选择目标路径")
+        hint = QLabel("📁 请从目录管理中的目录树选择目标路径（可多选）")
         hint.setStyleSheet("color: #4a9eff; font-weight: bold; padding: 5px;")
         layout.addWidget(hint)
         
@@ -360,6 +403,7 @@ class WindowsACLDialog(QDialog):
         tree.setHeaderLabels(["目录名称", "路径", "共享"])
         tree.setColumnWidth(0, 250)
         tree.setColumnWidth(1, 280)
+        tree.setSelectionMode(QTreeWidget.ExtendedSelection)
         layout.addWidget(tree)
         
         # 状态标签
@@ -427,12 +471,32 @@ class WindowsACLDialog(QDialog):
         
         # 显示对话框
         if dialog.exec_() == QDialog.Accepted:
-            selected = tree.currentItem()
-            if selected:
-                # 获取路径（在第二列）
+            selected_items = tree.selectedItems()
+            for selected in selected_items:
                 path = selected.text(1)
                 if path:
-                    self.path_input.setText(path)
+                    self._add_path_to_list(path)
+    
+    def manual_add_path(self):
+        """手动输入路径并添加到列表"""
+        path, ok = QInputDialog.getText(
+            self, "手动输入路径", "请输入文件夹路径:",
+            QLineEdit.Normal, ""
+        )
+        if ok and path.strip():
+            self._add_path_to_list(path.strip())
+    
+    def remove_selected_paths(self):
+        """移除选中的路径"""
+        selected_items = self.path_list.selectedItems()
+        for item in selected_items:
+            row = self.path_list.row(item)
+            self.path_list.takeItem(row)
+        self._update_path_count()
+
+    def browse_path(self):
+        """兼容旧版调用：从目录树选择单个路径（添加到列表）"""
+        self.browse_and_add_path()
     
     def _copy_tree_item(self, source_item, tree, parent_item):
         """递归复制目录树项"""
@@ -462,7 +526,6 @@ class WindowsACLDialog(QDialog):
     
     def load_local_users(self):
         """加载本地Windows用户（只显示配置文件中的用户）"""
-        from PyQt5.QtWidgets import QListWidgetItem
         from config_manager import config
         
         self.user_info_label.setText("正在加载本地用户...")
@@ -547,11 +610,9 @@ class WindowsACLDialog(QDialog):
     
     def accept(self):
         """验证并接受对话框"""
-        # 验证文件路径
-        file_path = self.path_input.text().strip()
-        if not file_path:
-            QMessageBox.warning(self, "警告", "请输入或选择文件/文件夹路径")
-            self.path_input.setFocus()
+        # 验证至少有一个路径
+        if self.path_list.count() == 0:
+            QMessageBox.warning(self, "警告", "请至少添加一个文件夹路径")
             return
         
         # 验证用户选择（检查是否至少选择了一个用户）
@@ -572,13 +633,16 @@ class WindowsACLDialog(QDialog):
     
     def get_data(self):
         """获取表单数据"""
+        # 获取所有路径
+        paths = [self.path_list.item(i).text() for i in range(self.path_list.count())]
+        
         # 获取所有选中的用户名
         selected_items = self.user_list.selectedItems()
         usernames = [item.data(Qt.UserRole) for item in selected_items]
         
         return {
-            'path': self.path_input.text().strip(),
-            'usernames': usernames,  # 返回用户名列表
+            'paths': paths,          # 文件夹路径列表（支持多个）
+            'usernames': usernames,  # 用户名列表（支持多个）
             'read': self.read_check.isChecked(),
             'write': self.write_check.isChecked(),
             'modify': self.modify_check.isChecked(),
@@ -988,66 +1052,13 @@ class PermissionTab(QWidget):
         dialog = WindowsACLDialog(self, directory_tab=self.directory_tab, 
                                  preset_path=path, preset_users=[username])
         if dialog.exec_() == QDialog.Accepted:
-            data = dialog.get_data()
-            
-            if not data['path']:
-                QMessageBox.warning(self, "警告", "请选择目标路径")
-                return
-            
-            if not data['usernames'] or len(data['usernames']) == 0:
-                QMessageBox.warning(self, "警告", "请至少选择一个用户")
-                return
-            
-            self._execute_acl_setting(data)
-    
-    def grant_permission_for_directory(self, path: str):
-        """为目录添加用户（从目录管理“+”按钮调用）"""
-        dialog = WindowsACLDialog(self, directory_tab=self.directory_tab, preset_path=path)
-        if dialog.exec_() == QDialog.Accepted:
-            data = dialog.get_data()
-            
-            if not data['path']:
-                QMessageBox.warning(self, "警告", "请选择目标路径")
-                return
-            
-            if not data['usernames'] or len(data['usernames']) == 0:
-                QMessageBox.warning(self, "警告", "请至少选择一个用户")
-                return
-            
-            self._execute_acl_setting(data)
-    
-    def grant_permission_for_user(self, path: str, username: str, chinese_name: str):
-        """为指定用户修改权限（从目录管理右键菜单调用）"""
-        dialog = WindowsACLDialog(self, directory_tab=self.directory_tab, 
-                                 preset_path=path, preset_users=[username])
-        if dialog.exec_() == QDialog.Accepted:
-            data = dialog.get_data()
-            
-            if not data['path']:
-                QMessageBox.warning(self, "警告", "请选择目标路径")
-                return
-            
-            if not data['usernames'] or len(data['usernames']) == 0:
-                QMessageBox.warning(self, "警告", "请至少选择一个用户")
-                return
-            
-            self._execute_acl_setting(data)
+            self._execute_acl_setting(dialog.get_data())
     
     def grant_permission_for_directory(self, path: str):
         """为目录添加用户（从目录管理"+"按钮调用）"""
         dialog = WindowsACLDialog(self, directory_tab=self.directory_tab, preset_path=path)
         if dialog.exec_() == QDialog.Accepted:
-            data = dialog.get_data()
-            
-            if not data['path']:
-                QMessageBox.warning(self, "警告", "请选择目标路径")
-                return
-            
-            if not data['usernames'] or len(data['usernames']) == 0:
-                QMessageBox.warning(self, "警告", "请至少选择一个用户")
-                return
-            
-            self._execute_acl_setting(data)
+            self._execute_acl_setting(dialog.get_data())
     
     def remove_user_acl_permission(self, path: str, username: str, chinese_name: str):
         """删除用户对目录的Windows ACL权限（从目录管理右键菜单调用）"""
@@ -1116,30 +1127,30 @@ class PermissionTab(QWidget):
         """设置Windows ACL权限（授予权限）"""
         dialog = WindowsACLDialog(self, directory_tab=self.directory_tab)
         if dialog.exec_() == QDialog.Accepted:
-            data = dialog.get_data()
-            
-            if not data['path']:
-                QMessageBox.warning(self, "警告", "请选择目标路径")
-                return
-            
-            if not data['usernames'] or len(data['usernames']) == 0:
-                QMessageBox.warning(self, "警告", "请至少选择一个用户")
-                return
-            
-            self._execute_acl_setting(data)
+            self._execute_acl_setting(dialog.get_data())
     
     def _execute_acl_setting(self, data: dict):
-        """执行ACL权限设置（批量处理）"""
+        """执行ACL权限设置（批量处理：多文件夹 × 多用户）"""
         # 获取权限参数（布尔值）
         read = data['read']
         write = data['write']
         modify = data['modify']
         full_control = data['full_control']
         recursive = data['recursive']
+        paths = data.get('paths', [])
+        usernames = data.get('usernames', [])
         
         # 验证至少选择一项权限
         if not (read or write or modify or full_control):
             QMessageBox.warning(self, "警告", "请至少选择一项权限")
+            return
+        
+        if not paths:
+            QMessageBox.warning(self, "警告", "请至少选择一个文件夹路径")
+            return
+        
+        if not usernames:
+            QMessageBox.warning(self, "警告", "请至少选择一个用户")
             return
         
         # 构建权限描述（用于显示）
@@ -1154,41 +1165,67 @@ class PermissionTab(QWidget):
             if write:
                 permissions_desc.append('写入')
         
-        # 批量为多个用户设置权限
-        success_count = 0
-        failed_users = []
+        # 使用批量接口：多文件夹 × 多用户
+        result = api_client.set_file_permissions_batch(
+            file_paths=paths,
+            usernames=usernames,
+            read=read,
+            write=write,
+            modify=modify,
+            full_control=full_control,
+            recursive=recursive
+        )
         
-        for username in data['usernames']:
-            result = api_client.set_file_permission(
-                file_path=data['path'],
-                username=username,
-                read=read,
-                write=write,
-                modify=modify,
-                full_control=full_control,
-                recursive=recursive
-            )
-            
-            if result.get('success'):
-                success_count += 1
-            else:
-                error_msg = result.get('error') or result.get('message', '未知错误')
-                failed_users.append(f"{username}: {error_msg}")
+        total = len(paths) * len(usernames)
+        
+        # 如果批量接口返回了 success_count，说明新接口可用
+        batch_api_available = 'success_count' in result
+        
+        if batch_api_available:
+            success_count = result.get('success_count', 0)
+            fail_count = result.get('fail_count', 0)
+            failed_items = [
+                f"{r['file_path']} / {r['username']}: {r.get('message', '')}"
+                for r in result.get('results', [])
+                if not r.get('success')
+            ]
+        else:
+            # 服务器不支持批量接口，回退到逐个调用
+            success_count = 0
+            failed_items = []
+            for path in paths:
+                for username in usernames:
+                    r = api_client.set_file_permission(
+                        file_path=path,
+                        username=username,
+                        read=read,
+                        write=write,
+                        modify=modify,
+                        full_control=full_control,
+                        recursive=recursive
+                    )
+                    if r.get('success'):
+                        success_count += 1
+                    else:
+                        err = r.get('error') or r.get('message', '未知错误')
+                        failed_items.append(f"{path} / {username}: {err}")
+            fail_count = total - success_count
         
         # 显示结果
-        if success_count == len(data['usernames']):
+        path_summary = paths[0] if len(paths) == 1 else f"{paths[0]} 等 {len(paths)} 个路径"
+        if fail_count == 0:
             QMessageBox.information(self, "成功", 
-                f"已为 {success_count} 个用户设置权限\n"
-                f"路径: {data['path']}\n"
+                f"已为 {len(usernames)} 个用户、{len(paths)} 个文件夹设置权限\n"
+                f"路径: {path_summary}\n"
                 f"权限: {', '.join(permissions_desc)}")
         elif success_count > 0:
             QMessageBox.warning(self, "部分成功", 
-                f"成功: {success_count} 个用户\n"
-                f"失败: {len(failed_users)} 个用户\n\n"
-                f"失败详情:\n" + "\n".join(failed_users[:5]))
+                f"成功: {success_count} 项\n"
+                f"失败: {fail_count} 项\n\n"
+                f"失败详情:\n" + "\n".join(failed_items[:5]))
         else:
             QMessageBox.critical(self, "失败", 
-                f"所有用户权限设置失败\n\n" + "\n".join(failed_users[:5]))
+                f"所有权限设置均失败\n\n" + "\n".join(failed_items[:5]))
         
         self.refresh_permissions()
     
